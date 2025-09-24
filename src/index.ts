@@ -7,11 +7,40 @@ import {
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
-import axios from 'axios';
+import axios, { AxiosProxyConfig } from 'axios';
 import * as cheerio from 'cheerio';
+import { URL } from 'url';
 
 const API_KEY = process.env.GOOGLE_API_KEY;
 const SEARCH_ENGINE_ID = process.env.GOOGLE_SEARCH_ENGINE_ID;
+
+// Create proxy configuration from environment variables
+function createProxyConfig(): AxiosProxyConfig | false {
+  const httpsProxy = process.env.HTTPS_PROXY || process.env.https_proxy;
+  const httpProxy = process.env.HTTP_PROXY || process.env.http_proxy;
+
+  const proxyUrl = httpsProxy || httpProxy;
+
+  if (!proxyUrl) {
+    return false;
+  }
+
+  try {
+    const url = new URL(proxyUrl);
+    return {
+      protocol: url.protocol.replace(':', ''),
+      host: url.hostname,
+      port: parseInt(url.port) || (url.protocol === 'https:' ? 443 : 80),
+      auth: url.username && url.password ? {
+        username: url.username,
+        password: url.password
+      } : undefined
+    };
+  } catch (error) {
+    console.warn(`Invalid proxy URL: ${proxyUrl}`);
+    return false;
+  }
+}
 
 if (!API_KEY) {
   throw new Error('GOOGLE_API_KEY environment variable is required');
@@ -65,16 +94,18 @@ class SearchServer {
       }
     );
 
+    const proxyConfig = createProxyConfig();
     this.axiosInstance = axios.create({
       baseURL: 'https://www.googleapis.com/customsearch/v1',
       params: {
         key: API_KEY,
         cx: SEARCH_ENGINE_ID,
       },
+      proxy: proxyConfig,
     });
 
     this.setupToolHandlers();
-    
+
     // Error handling
     this.server.onerror = (error) => console.error('[MCP Error]', error);
     process.on('SIGINT', async () => {
@@ -183,7 +214,10 @@ class SearchServer {
         const { url } = request.params.arguments;
 
         try {
-          const response = await axios.get(url);
+          const proxyConfig = createProxyConfig();
+          const response = await axios.get(url, {
+            proxy: proxyConfig,
+          });
           const $ = cheerio.load(response.data);
 
           // Remove script and style elements
